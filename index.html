@@ -10,12 +10,24 @@
 </head>
 <body class="bg-gray-50">
   <div id="root"></div>
+  <div id="overlay" style="display:none;position:fixed;inset:0;background:#fff;padding:16px;overflow:auto;font-family:system-ui,Segoe UI,Roboto">
+    <h2 style="margin:0 0 8px 0">Startup error</h2>
+    <pre id="overlay-msg" style="white-space:pre-wrap"></pre>
+  </div>
 
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <script>
+    function showError(e){
+      try{
+        document.getElementById('overlay').style.display='block';
+        document.getElementById('overlay-msg').textContent = (e && e.stack) ? e.stack : String(e);
+      }catch{ alert(e); }
+    }
+    window.addEventListener('error', (e)=>showError(e.error||e.message));
+    window.addEventListener('unhandledrejection', (e)=>showError(e.reason||e));
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
     }
@@ -24,13 +36,9 @@
   <script type="text/babel">
     const { useEffect, useMemo, useRef, useState } = React;
 
-    // ---------- Utils ----------
     const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
     const nowISO = () => new Date().toISOString();
-    const LS_KEYS = {
-      dealers: "pdr_dealerships",
-      forms: "pdr_forms"
-    };
+    const LS_KEYS = { dealers: "pdr_dealerships", forms: "pdr_forms" };
 
     function useLocalStorage(key, initialValue) {
       const [value, setValue] = useState(() => {
@@ -40,9 +48,7 @@
       return [value, setValue];
     }
 
-    // ---------- Data migration ----------
     function migrate(dealers, forms) {
-      // Ensure dealer has contacts array and primaryEmail
       dealers = (dealers||[]).map(d => ({
         id: d.id || uid(),
         name: d.name || "Unnamed",
@@ -50,7 +56,6 @@
         contacts: Array.isArray(d.contacts) ? d.contacts : [],
         archived: !!d.archived
       }));
-      // Map old NotInv -> NoCharge; add new statuses support
       forms = (forms||[]).map(f => ({
         ...f,
         vehicles: (f.vehicles||[]).map(v => ({
@@ -62,7 +67,6 @@
       return { dealers, forms };
     }
 
-    // ---------- Components ----------
     function Nav({ route, setRoute }) {
       const Item = ({r,label}) => (
         <button onClick={()=>setRoute(r)} className={"px-3 py-2 rounded-xl border " + (route===r ? "bg-black text-white" : "bg-white")}>{label}</button>
@@ -103,10 +107,8 @@
 
       const mergeDealers = (fromId, toId) => {
         if (fromId === toId) return alert("Choose two different dealerships.");
-        // Reassign forms
         const updatedForms = forms.map(f => f.dealershipId===fromId ? {...f, dealershipId: toId} : f);
         window._setForms(updatedForms);
-        // Optionally archive the source
         updateDealer(fromId, { archived: true });
         alert("Merged: forms moved and source archived.");
       };
@@ -116,9 +118,8 @@
         const role = prompt("Role (e.g., Manager)?") || "";
         const email = prompt("Email?") || "";
         const phone = prompt("Phone?") || "";
-        updateDealer(dealerId, {
-          contacts: [...dealers.find(d=>d.id===dealerId).contacts, { id: uid(), name, role, email, phone }]
-        });
+        const d = dealers.find(d=>d.id===dealerId);
+        updateDealer(dealerId, { contacts: [...d.contacts, { id: uid(), name, role, email, phone }] });
       };
       const removeContact = (dealerId, contactId) => {
         const d = dealers.find(d=>d.id===dealerId);
@@ -236,7 +237,7 @@
       return (
         <div className="mx-auto max-w-5xl p-4 space-y-3">
           <h2 className="text-lg font-semibold">Settings</h2>
-          <p className="text-sm text-gray-600">Future features: theme toggle, export options, backups.</p>
+          <p className="text-sm text-gray-600">Future features: theme, export options, backups.</p>
         </div>
       );
     }
@@ -311,16 +312,13 @@
     const PANEL_OPTIONS = ["Hood","Roof","Trunk","LF Fender","RF Fender","LR Door","RR Door","LR Qtr","RR Qtr","L Rocker","R Rocker","L A-Pillar","R A-Pillar","Belt Moldings","Other"];
 
     function UnitCard({ unit, onChange, onRemove }) {
-      const fileInputRef = useRef(null);
+      const fileInputRef = React.useRef(null);
       const addPhotos = async (files) => {
         const arr = await Promise.all(Array.from(files).map(file => fileToDataURL(file)));
         onChange({ pictures: [...unit.pictures, ...arr] });
       };
       const toggleExpanded = () => onChange({ _expanded: !unit._expanded });
-
-      // Top Complete button (duplicate at bottom for UX)
       const completeUnit = () => onChange({ _expanded:false });
-
       return (
         <div className="border rounded-2xl p-3">
           <div className="flex items-center gap-2">
@@ -458,9 +456,9 @@
     }
 
     function SignaturePad({ value, onChange }) {
-      const canvasRef = useRef(null);
-      const drawing = useRef(false);
-      const last = useRef({x:0,y:0});
+      const canvasRef = React.useRef(null);
+      const drawing = React.useRef(false);
+      const last = React.useRef({x:0,y:0});
       useEffect(()=>{
         const canvas = canvasRef.current;
         const ctx = canvas.getContext("2d"); ctx.lineWidth=2; ctx.lineCap="round"; ctx.strokeStyle="black";
@@ -513,10 +511,7 @@
       const [dealers, _setDealers] = useState(mig.dealers);
       const [forms, _setForms] = useState(mig.forms);
       const [route, setRoute] = useState("walks");
-
-      // expose setters so merge can update forms
       useEffect(()=>{ window._setForms = (x)=>{ _setForms(x); setForms0(x); }; }, []);
-
       useEffect(()=>{ _setDealers(dealers); setDealers(dealers); }, [dealers]);
       useEffect(()=>{ _setForms(forms); setForms0(forms); }, [forms]);
 
@@ -529,7 +524,6 @@
         </div>
       );
     }
-
     const root = ReactDOM.createRoot(document.getElementById("root"));
     root.render(<App />);
   </script>
