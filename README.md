@@ -1,5 +1,3 @@
 # lotWalk
 
-PWA for modernizing PDR damage documentation.
-
-See CHANGELOG.md for features. Deploy via GitHub Pages (Settings → Pages → main / root).
+PWA for lot walks and PDR damage documentation (mobile + desktop).
