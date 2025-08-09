@@ -5,8 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="manifest" href="./manifest.webmanifest">
   <meta name="theme-color" content="#000000" />
-  <title>PDR Forms</title>
+  <title>lotWalk</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:50}
+    .card{background:white;border:1px solid #e5e7eb;border-radius:1rem;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  </style>
 </head>
 <body class="bg-gray-50">
   <div id="root"></div>
@@ -24,7 +28,6 @@
   <script type="text/babel">
     const { useEffect, useMemo, useRef, useState } = React;
     const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
-
     function useLocalStorage(key, initialValue) {
       const [value, setValue] = useState(() => {
         try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : initialValue; } catch { return initialValue; }
@@ -32,7 +35,6 @@
       useEffect(() => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }, [key, value]);
       return [value, setValue];
     }
-
     function SignaturePad({ value, onChange }) {
       const canvasRef = useRef(null);
       const drawing = useRef(false);
@@ -87,147 +89,166 @@
         </div>
       );
     }
-
     const PANEL_OPTIONS = ["Hood","Roof","Trunk","LF Fender","RF Fender","LR Door","RR Door","LR Qtr","RR Qtr","L Rocker","R Rocker","L A-Pillar","R A-Pillar","Belt Moldings","Other"];
-
     function StatusPill({ status }) {
-      const map = {
-        draft: "bg-gray-100 text-gray-800",
-        sent_for_approval: "bg-yellow-100 text-yellow-800",
-        approved: "bg-green-100 text-green-800",
-        denied: "bg-red-100 text-red-800",
-        hold: "bg-orange-100 text-orange-800",
-      };
+      const map = { draft:"bg-gray-100 text-gray-800", sent_for_approval:"bg-yellow-100 text-yellow-800", approved:"bg-green-100 text-green-800", denied:"bg-red-100 text-red-800", hold:"bg-orange-100 text-orange-800" };
       return <span className={`px-2 py-1 rounded-lg text-xs ${map[status]}`}>{status.replaceAll("_"," ")}</span>;
     }
-    function Tab({ label, active, onClick }) {
-      return <button onClick={onClick} className={"px-3 py-2 rounded-xl border " + (active ? "bg-black text-white" : "bg-white")}>{label}</button>;
-    }
+    function Tab({ label, active, onClick }) { return <button onClick={onClick} className={"px-3 py-2 rounded-xl border " + (active ? "bg-black text-white" : "bg-white")}>{label}</button>; }
     function StatusSelect({ value, onChange }) {
-      return (
-        <label className="text-sm flex items-center gap-2">Vehicle status
-          <select className="px-3 py-2 border rounded-xl" value={value} onChange={e=>onChange(e.target.value)}>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="denied">Denied</option>
-            <option value="hold">Hold</option>
-          </select>
-        </label>
-      );
+      return (<label className="text-sm flex items-center gap-2">Vehicle status
+        <select className="px-3 py-2 border rounded-xl" value={value} onChange={e=>onChange(e.target.value)}>
+          <option value="pending">Pending</option><option value="approved">Approved</option><option value="denied">Denied</option><option value="hold">Hold</option>
+        </select></label>);
     }
-    function fileToDataURL(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    }
-    function dedupeUnits(units) {
-      const map = new Map();
-      for (const u of units) {
-        const key = (u.vin || u.stock || u.id).trim();
-        if (!map.has(key)) map.set(key, u);
-      }
-      return Array.from(map.values());
+    function fileToDataURL(file) { return new Promise((resolve, reject)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.onerror=reject; r.readAsDataURL(file); }); }
+    function dedupeUnits(units){const m=new Map(); for(const u of units){const k=(u.vin||u.stock||u.id).trim(); if(!m.has(k)) m.set(k,u);} return Array.from(m.values());}
+
+    function DealerPicker({ dealerships, activeId, onChange, onAdd, onManage }) {
+      const visible = dealerships.filter(d=>!d.archived);
+      const hasArchived = dealerships.some(d=>d.archived);
+      return (<div className="flex items-center gap-2">
+        <select className="px-3 py-2 border rounded-xl" value={activeId} onChange={e=>onChange(e.target.value)}>
+          {visible.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+          {visible.length===0 && <option value="">No active dealerships</option>}
+        </select>
+        <button className="px-3 py-2 rounded-xl border" onClick={onAdd}>+ Dealer</button>
+        <button className="px-3 py-2 rounded-xl border" onClick={onManage}>Manage{hasArchived?" •":""}</button>
+      </div>);
     }
 
-    function DealerPicker({ dealerships, activeId, onChange, onAdd }) {
-      return (
-        <div className="flex items-center gap-2">
-          <select className="px-3 py-2 border rounded-xl" value={activeId} onChange={e=>onChange(e.target.value)}>
-            {dealerships.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            {dealerships.length === 0 && <option value="">No dealerships</option>}
-          </select>
-          <button className="px-3 py-2 rounded-xl border" onClick={onAdd}>+ Dealer</button>
+    function ManageDealersModal({ open, onClose, dealerships, setDealerships, forms }) {
+      const [showArchived, setShowArchived] = useState(false);
+      const [renameMap, setRenameMap] = useState({});
+      const active = dealerships.filter(d=>!d.archived);
+      const displayed = dealerships.filter(d=>showArchived || !d.archived);
+      const setName = (id, name)=>setRenameMap(prev=>({...prev,[id]:name}));
+      const applyRename = (id)=>{ const name=(renameMap[id]??"").trim(); if(!name) return; setDealerships(dealerships.map(d=>d.id===id?{...d,name}:d)); };
+      const toggleArchive = (id,val)=> setDealerships(dealerships.map(d=>d.id===id?{...d, archived:val}:d));
+      const deleteDealer = (id)=>{ const count=forms.filter(f=>f.dealershipId===id).length; if(count>0) return alert("Cannot delete: dealer has forms. Merge or archive instead."); if(!confirm("Delete this empty dealership?")) return; setDealerships(dealerships.filter(d=>d.id!==id)); };
+      const mergeDealer = (sourceId, targetId, archiveAfter=true)=>{
+        if(!targetId || sourceId===targetId) return;
+        const reassigned = forms.map(f=>f.dealershipId===sourceId?{...f, dealershipId:targetId}:f);
+        localStorage.setItem("pdr_forms", JSON.stringify(reassigned));
+        if(archiveAfter){ setDealerships(dealerships.map(d=>d.id===sourceId?{...d, archived:true}:d)); } else { setDealerships([...dealerships]); }
+        alert("Forms reassigned.");
+      };
+      if(!open) return null;
+      return (<div className="modal-backdrop">
+        <div className="card w-[min(95vw,800px)] max-h-[85vh] overflow-auto p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">Manage Dealerships</h2>
+            <div className="flex-1" />
+            <label className="text-sm flex items-center gap-2">
+              <input type="checkbox" className="w-4 h-4" checked={showArchived} onChange={e=>setShowArchived(e.target.checked)} /> Show archived
+            </label>
+            <button className="px-3 py-2 rounded-xl border" onClick={onClose}>Close</button>
+          </div>
+          <div className="space-y-3">
+            {displayed.map(d=>{
+              const hasForms = forms.some(f=>f.dealershipId===d.id);
+              const targets = active.filter(x=>x.id!==d.id);
+              return (<div key={d.id} className="border rounded-xl p-3">
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className={"px-2 py-1 rounded-lg text-xs "+(d.archived?"bg-gray-200":"bg-green-100 text-green-800")}>{d.archived?"Archived":"Active"}</span>
+                  <input className="px-2 py-1 border rounded-lg flex-1 min-w-[200px]" defaultValue={d.name} onChange={e=>setName(d.id,e.target.value)} />
+                  <button className="px-3 py-1.5 rounded-xl border" onClick={()=>applyRename(d.id)}>Rename</button>
+                  {!d.archived ? <button className="px-3 py-1.5 rounded-xl border" onClick={()=>toggleArchive(d.id,true)}>Archive</button>
+                                : <button className="px-3 py-1.5 rounded-xl border" onClick={()=>toggleArchive(d.id,false)}>Unarchive</button>}
+                  <button className="px-3 py-1.5 rounded-xl border" disabled={hasForms} title={hasForms?"Dealer has forms":""} onClick={()=>deleteDealer(d.id)}>Delete</button>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-gray-600">Merge into:</span>
+                  <select className="px-2 py-1 border rounded-lg" defaultValue="" id={"merge-"+d.id}>
+                    <option value="" disabled>Select target</option>
+                    {targets.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  <label className="text-sm flex items-center gap-2">
+                    <input type="checkbox" className="w-4 h-4" defaultChecked={true} id={"arch-"+d.id} /> Archive source after
+                  </label>
+                  <button className="px-3 py-1.5 rounded-xl border" onClick={()=>{
+                    const target=document.getElementById("merge-"+d.id).value;
+                    const arch=document.getElementById("arch-"+d.id).checked;
+                    if(!target){ alert("Pick a target dealership"); return; }
+                    mergeDealer(d.id,target,arch);
+                  }}>Merge</button>
+                  <span className="text-xs text-gray-500">All forms will be reassigned to the target.</span>
+                </div>
+                {hasForms && <p className="text-xs text-gray-500 mt-1">Forms: {forms.filter(f=>f.dealershipId===d.id).length}</p>}
+              </div>);
+            })}
+            {displayed.length===0 && <p className="text-gray-500 italic">No dealerships to show.</p>}
+          </div>
         </div>
-      );
+      </div>);
+    }
+
+    function ExportImport({ forms, setForms, dealerships, setDealerships }) {
+      const exportData = () => {
+        const blob = new Blob([JSON.stringify({ forms, dealerships }, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `lotwalk-data-${new Date().toISOString().slice(0,10)}.json`;
+        a.click(); URL.revokeObjectURL(url);
+      };
+      const importData = async (file) => {
+        const text = await file.text(); const data = JSON.parse(text);
+        if (!data || typeof data !== "object") return alert("Invalid file");
+        if (confirm("Importing will replace local data. Continue?")) {
+          setForms(data.forms || []);
+          setDealerships((data.dealerships || []).map(d=>({...d, archived:!!d.archived})));
+        }
+      };
+      return (<div className="flex items-center gap-2">
+        <button className="px-3 py-2 rounded-xl border" onClick={exportData}>Export JSON</button>
+        <label className="px-3 py-2 rounded-xl border cursor-pointer">Import JSON
+          <input className="hidden" type="file" accept="application/json" onChange={e=>e.target.files && importData(e.target.files[0])} />
+        </label>
+      </div>);
     }
 
     function VehicleCard({ vehicle, onChange, onRemove }) {
       const fileInputRef = React.useRef(null);
-      const addPhotos = async (files) => {
-        const arr = await Promise.all(Array.from(files).map(file => fileToDataURL(file)));
-        onChange({ pictures: [...vehicle.pictures, ...arr] });
-      };
-      return (
-        <div className="border rounded-2xl p-3 space-y-3">
-          <div className="flex items-center gap-2">
-            <StatusPill status={vehicle.status === "pending" ? "sent_for_approval" : vehicle.status} />
-            <div className="flex-1" />
-            <button className="px-3 py-1.5 rounded-xl border" onClick={onRemove}>Remove</button>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-3">
-            <label className="text-sm">Stock
-              <input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.stock} onChange={e=>onChange({stock:e.target.value})} />
-            </label>
-            <label className="text-sm">Year
-              <input className="mt-1 w-full px-3 py-2 border rounded-xl" inputMode="numeric" value={vehicle.year} onChange={e=>onChange({year:e.target.value})} />
-            </label>
-            <label className="text-sm">Make
-              <input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.make} onChange={e=>onChange({make:e.target.value})} />
-            </label>
-            <label className="text-sm">Model
-              <input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.model} onChange={e=>onChange({model:e.target.value})} />
-            </label>
-            <label className="text-sm">Color
-              <input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.color} onChange={e=>onChange({color:e.target.value})} />
-            </label>
-            <label className="text-sm">VIN
-              <input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.vin} onChange={e=>onChange({vin:e.target.value})} />
-            </label>
-            <label className="text-sm">Price ($)
-              <input className="mt-1 w-full px-3 py-2 border rounded-xl" inputMode="decimal" value={vehicle.price ?? ""} onChange={e=>onChange({price: e.target.value? Number(e.target.value) : null})} />
-            </label>
-            <div className="md:col-span-2">
-              <label className="text-sm">Notes
-                <textarea className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.notes} onChange={e=>onChange({notes:e.target.value})} />
-              </label>
-            </div>
-          </div>
-
-          <div>
-            <p className="text-sm mb-1">Damaged Panels</p>
-            <div className="flex flex-wrap gap-2">
-              {PANEL_OPTIONS.map(p => (
-                <label key={p} className={"px-2 py-1.5 rounded-xl border text-sm select-none " + (vehicle.damagedPanels.includes(p) ? "bg-black text-white" : "bg-white") }>
-                  <input type="checkbox" className="hidden" checked={vehicle.damagedPanels.includes(p)} onChange={e=>{
-                    const set = new Set(vehicle.damagedPanels);
-                    if (e.target.checked) set.add(p); else set.delete(p);
-                    onChange({ damagedPanels: Array.from(set) });
-                  }} />
-                  {p}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid gap-2">
-            <div className="flex items-center gap-2">
-              <button className="px-3 py-2 rounded-xl border" onClick={()=>fileInputRef.current?.click()}>Add Pictures</button>
-              <input ref={fileInputRef} type="file" accept="image/*" multiple capture="environment" className="hidden" onChange={e=> e.target.files && addPhotos(e.target.files)} />
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" className="w-4 h-4" checked={vehicle.notComplete} onChange={e=>onChange({notComplete:e.target.checked})} />
-                Not complete
-              </label>
-            </div>
-            <div className="flex gap-2 overflow-x-auto">
-              {vehicle.pictures.map((src, i) => (
-                <div key={i} className="relative">
-                  <img src={src} alt="vehicle" className="h-24 w-24 object-cover rounded-xl border" />
-                  <button className="absolute -top-2 -right-2 bg-white border rounded-full w-6 h-6" onClick={()=>onChange({ pictures: vehicle.pictures.filter((_,idx)=>idx!==i) })}>×</button>
-                </div>
-              ))}
-              {vehicle.pictures.length === 0 && <p className="text-sm text-gray-500">No pictures yet.</p>}
-            </div>
-          </div>
-
+      const addPhotos = async (files)=>{ const arr=await Promise.all(Array.from(files).map(file=>fileToDataURL(file))); onChange({ pictures:[...vehicle.pictures,...arr] }); };
+      return (<div className="border rounded-2xl p-3 space-y-3">
+        <div className="flex items-center gap-2">
+          <StatusPill status={vehicle.status==="pending"?"sent_for_approval":vehicle.status} />
+          <div className="flex-1" />
+          <button className="px-3 py-1.5 rounded-xl border" onClick={onRemove}>Remove</button>
+        </div>
+        <div className="grid md:grid-cols-3 gap-3">
+          <label className="text-sm">Stock<input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.stock} onChange={e=>onChange({stock:e.target.value})} /></label>
+          <label className="text-sm">Year<input className="mt-1 w-full px-3 py-2 border rounded-xl" inputMode="numeric" value={vehicle.year} onChange={e=>onChange({year:e.target.value})} /></label>
+          <label className="text-sm">Make<input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.make} onChange={e=>onChange({make:e.target.value})} /></label>
+          <label className="text-sm">Model<input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.model} onChange={e=>onChange({model:e.target.value})} /></label>
+          <label className="text-sm">Color<input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.color} onChange={e=>onChange({color:e.target.value})} /></label>
+          <label className="text-sm">VIN<input className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.vin} onChange={e=>onChange({vin:e.target.value})} /></label>
+          <label className="text-sm">Price ($)<input className="mt-1 w-full px-3 py-2 border rounded-xl" inputMode="decimal" value={vehicle.price ?? ""} onChange={e=>onChange({price: e.target.value? Number(e.target.value) : null})} /></label>
+          <div className="md:col-span-2"><label className="text-sm">Notes<textarea className="mt-1 w-full px-3 py-2 border rounded-xl" value={vehicle.notes} onChange={e=>onChange({notes:e.target.value})} /></label></div>
+        </div>
+        <div><p className="text-sm mb-1">Damaged Panels</p>
           <div className="flex flex-wrap gap-2">
-            <StatusSelect value={vehicle.status} onChange={val=>onChange({status:val})} />
+            {PANEL_OPTIONS.map(p=>(<label key={p} className={"px-2 py-1.5 rounded-xl border text-sm select-none "+(vehicle.damagedPanels.includes(p)?"bg-black text-white":"bg-white")}>
+              <input type="checkbox" className="hidden" checked={vehicle.damagedPanels.includes(p)} onChange={e=>{const s=new Set(vehicle.damagedPanels); if(e.target.checked)s.add(p); else s.delete(p); onChange({damagedPanels:Array.from(s)});}} />{p}
+            </label>))}
           </div>
         </div>
-      );
+        <div className="grid gap-2">
+          <div className="flex items-center gap-2">
+            <button className="px-3 py-2 rounded-xl border" onClick={()=>fileInputRef.current?.click()}>Add Pictures</button>
+            <input ref={fileInputRef} type="file" accept="image/*" multiple capture="environment" className="hidden" onChange={e=> e.target.files && addPhotos(e.target.files)} />
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="w-4 h-4" checked={vehicle.notComplete} onChange={e=>onChange({notComplete:e.target.checked})} />Not complete</label>
+          </div>
+          <div className="flex gap-2 overflow-x-auto">
+            {vehicle.pictures.map((src,i)=>(<div key={i} className="relative">
+              <img src={src} alt="vehicle" className="h-24 w-24 object-cover rounded-xl border" />
+              <button className="absolute -top-2 -right-2 bg-white border rounded-full w-6 h-6" onClick={()=>onChange({pictures:vehicle.pictures.filter((_,idx)=>idx!==i)})}>×</button>
+            </div>))}
+            {vehicle.pictures.length===0 && <p className="text-sm text-gray-500">No pictures yet.</p>}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2"><StatusSelect value={vehicle.status} onChange={val=>onChange({status:val})} /></div>
+      </div>);
     }
 
     function FormCard({ form, onChange, onDelete }) {
@@ -241,123 +262,96 @@
       const sendForApproval = () => onChange(form.id, { status: "sent_for_approval" });
       const finalizeDecision = (decision) => onChange(form.id, { status: decision === "approve" ? "approved" : decision === "deny" ? "denied" : "hold", approverDecision: decision });
       const saveSignature = (sigData) => onChange(form.id, { approverSignature: sigData });
-      return (
-        <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <span className="px-2 py-1 rounded-lg text-xs bg-gray-100">{new Date(form.date).toLocaleString()}</span>
-            <StatusPill status={form.status} />
+      return (<div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <span className="px-2 py-1 rounded-lg text-xs bg-gray-100">{new Date(form.date).toLocaleString()}</span>
+          <StatusPill status={form.status} />
+          <div className="flex-1" />
+          <button className="px-3 py-2 rounded-xl border" onClick={() => onDelete(form.id)}>Delete</button>
+        </div>
+        <div className="flex gap-2">
+          <Tab label="Vehicles" active={tab==="vehicles"} onClick={()=>setTab("vehicles")} />
+          <Tab label="Approval" active={tab==="approval"} onClick={()=>setTab("approval")} />
+        </div>
+        {tab==="vehicles" && (<div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <button className="px-3 py-2 rounded-xl bg-black text-white" onClick={addVehicle}>Add Vehicle</button>
+            <span className="text-sm text-gray-500">{form.vehicles.length} added</span>
             <div className="flex-1" />
-            <button className="px-3 py-2 rounded-xl border" onClick={() => onDelete(form.id)}>Delete</button>
+            {form.status==="draft" && (<button className="px-3 py-2 rounded-xl border" onClick={sendForApproval}>Send for Approval</button>)}
           </div>
-          <div className="flex gap-2">
-            <Tab label="Vehicles" active={tab==="vehicles"} onClick={()=>setTab("vehicles")} />
-            <Tab label="Approval" active={tab==="approval"} onClick={()=>setTab("approval")} />
+          <div className="space-y-3">
+            {form.vehicles.map(v => (<VehicleCard key={v.id} vehicle={v} onChange={(patch)=>updateVehicle(v.id, patch)} onRemove={()=>removeVehicle(v.id)} />))}
+            {form.vehicles.length===0 && <p className="text-gray-500 italic">No vehicles yet.</p>}
           </div>
-          {tab === "vehicles" && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <button className="px-3 py-2 rounded-xl bg-black text-white" onClick={addVehicle}>Add Vehicle</button>
-                <span className="text-sm text-gray-500">{form.vehicles.length} added</span>
-                <div className="flex-1" />
-                {form.status === "draft" && (
-                  <button className="px-3 py-2 rounded-xl border" onClick={sendForApproval}>Send for Approval</button>
-                )}
-              </div>
-              <div className="space-y-3">
-                {form.vehicles.map(v => (
-                  <VehicleCard key={v.id} vehicle={v} onChange={(patch)=>updateVehicle(v.id, patch)} onRemove={()=>removeVehicle(v.id)} />
-                ))}
-                {form.vehicles.length === 0 && <p className="text-gray-500 italic">No vehicles yet.</p>}
-              </div>
-            </div>
-          )}
-          {tab === "approval" && (
-            <div className="space-y-4">
-              <p className="text-sm text-gray-600">Approvals can be on-device (manager taps decision and signs). Data stays on this device.</p>
-              <div className="flex flex-wrap gap-2">
-                <button disabled={form.status === "approved"} className="px-3 py-2 rounded-xl border" onClick={()=>finalizeDecision("approve")}>Approve</button>
-                <button disabled={form.status === "denied"} className="px-3 py-2 rounded-xl border" onClick={()=>finalizeDecision("deny")}>Deny</button>
-                <button disabled={form.status === "hold"} className="px-3 py-2 rounded-xl border" onClick={()=>finalizeDecision("hold")}>Hold</button>
-              </div>
-              <div className="grid gap-3">
-                <label className="text-sm">Approver name
-                  <input className="mt-1 w-full px-3 py-2 border rounded-xl" value={form.approverName||""} onChange={e=>onChange(form.id,{approverName:e.target.value})} />
-                </label>
-                <label className="text-sm">Approver notes
-                  <textarea className="mt-1 w-full px-3 py-2 border rounded-xl" value={form.approverNotes||""} onChange={e=>onChange(form.id,{approverNotes:e.target.value})} />
-                </label>
-                <div>
-                  <p className="text-sm mb-2">Signature</p>
-                  <SignaturePad value={form.approverSignature||null} onChange={saveSignature} />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    function ExportImport({ forms, setForms, dealerships, setDealerships }) {
-      const exportData = () => {
-        const blob = new Blob([JSON.stringify({ forms, dealerships }, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = `pdr-data-${new Date().toISOString().slice(0,10)}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-      };
-      const importData = async (file) => {
-        const text = await file.text();
-        const data = JSON.parse(text);
-        if (!data || typeof data !== "object") return alert("Invalid file");
-        if (confirm("Importing will replace local data. Continue?")) {
-          setForms(data.forms || []);
-          setDealerships(data.dealerships || []);
-        }
-      };
-      return (
-        <div className="flex items-center gap-2">
-          <button className="px-3 py-2 rounded-xl border" onClick={exportData}>Export JSON</button>
-          <label className="px-3 py-2 rounded-xl border cursor-pointer">
-            Import JSON
-            <input className="hidden" type="file" accept="application/json" onChange={e=>e.target.files && importData(e.target.files[0])} />
-          </label>
-        </div>
-      );
+        </div>)}
+        {tab==="approval" && (<div className="space-y-4">
+          <p className="text-sm text-gray-600">Approvals can be on-device (manager taps decision and signs). Data stays on this device.</p>
+          <div className="flex flex-wrap gap-2">
+            <button disabled={form.status==="approved"} className="px-3 py-2 rounded-xl border" onClick={()=>finalizeDecision("approve")}>Approve</button>
+            <button disabled={form.status==="denied"} className="px-3 py-2 rounded-xl border" onClick={()=>finalizeDecision("deny")}>Deny</button>
+            <button disabled={form.status==="hold"} className="px-3 py-2 rounded-xl border" onClick={()=>finalizeDecision("hold")}>Hold</button>
+          </div>
+          <div className="grid gap-3">
+            <label className="text-sm">Approver name
+              <input className="mt-1 w-full px-3 py-2 border rounded-xl" value={form.approverName||""} onChange={e=>onChange(form.id,{approverName:e.target.value})} />
+            </label>
+            <label className="text-sm">Approver notes
+              <textarea className="mt-1 w-full px-3 py-2 border rounded-xl" value={form.approverNotes||""} onChange={e=>onChange(form.id,{approverNotes:e.target.value})} />
+            </label>
+            <div><p className="text-sm mb-2">Signature</p><SignaturePad value={form.approverSignature||null} onChange={saveSignature} /></div>
+          </div>
+        </div>)}
+      </div>);
     }
 
     function App() {
       const [dealerships, setDealerships] = useLocalStorage("pdr_dealerships", []);
       const [forms, setForms] = useLocalStorage("pdr_forms", []);
-      const [activeDealerId, setActiveDealerId] = useState(dealerships[0]?.id || "");
+      const [activeDealerId, setActiveDealerId] = useState(() => {
+        const firstActive = (dealerships||[]).find(d => !d.archived)?.id || "";
+        return firstActive;
+      });
       const [search, setSearch] = useState("");
+      const [manageOpen, setManageOpen] = useState(false);
 
-      useEffect(() => { if (!activeDealerId && dealerships[0]) setActiveDealerId(dealerships[0].id); }, [dealerships]);
+      useEffect(() => {
+        if (dealerships.some(d => d.archived === undefined)) {
+          setDealerships(dealerships.map(d => ({...d, archived: !!d.archived})));
+        }
+      }, []);
+      useEffect(() => {
+        if (activeDealerId) {
+          const active = dealerships.find(d => d.id === activeDealerId && !d.archived);
+          if (!active) {
+            const firstActive = dealerships.find(d => !d.archived)?.id || "";
+            setActiveDealerId(firstActive);
+          }
+        } else {
+          const firstActive = dealerships.find(d => !d.archived)?.id || "";
+          if (firstActive) setActiveDealerId(firstActive);
+        }
+      }, [dealerships]);
 
       const addDealer = () => {
         const name = prompt("Dealership name?"); if (!name) return;
-        const d = { id: uid(), name }; setDealerships([...dealerships, d]); setActiveDealerId(d.id);
+        const d = { id: uid(), name, archived:false };
+        setDealerships([...(dealerships||[]), d]);
+        setActiveDealerId(d.id);
       };
-
-      const dealerForms = React.useMemo(() => forms.filter(f => f.dealershipId === activeDealerId), [forms, activeDealerId]);
 
       const newForm = () => {
         if (!activeDealerId) return alert("Select a dealership first");
-        const historyUnits = dealerForms.flatMap(f => f.vehicles.filter(v => v.status === "hold" || v.notComplete));
+        const historyUnits = forms.filter(f=>f.dealershipId===activeDealerId).flatMap(f => f.vehicles.filter(v => v.status === "hold" || v.notComplete));
         const suggested = dedupeUnits(historyUnits);
-        const f = {
-          id: uid(),
-          dealershipId: activeDealerId,
-          date: new Date().toISOString(),
-          status: "draft",
-          vehicles: suggested.map(u => ({ ...u, id: uid(), pictures: [], notes: (u.notes ? (u.notes + " | recalled") : "recalled"), status: "pending" }))
-        };
+        const f = { id: uid(), dealershipId: activeDealerId, date: new Date().toISOString(), status: "draft",
+          vehicles: suggested.map(u => ({ ...u, id: uid(), pictures: [], notes: (u.notes ? (u.notes + " | recalled") : "recalled"), status: "pending" })) };
         setForms([f, ...forms]);
       };
-
       const updateForm = (id, patch) => setForms(forms.map(f => f.id === id ? { ...f, ...patch } : f));
       const removeForm = (id) => { if (confirm("Delete this form?")) setForms(forms.filter(f => f.id !== id)); };
 
+      const dealerForms = React.useMemo(() => forms.filter(f => f.dealershipId === activeDealerId), [forms, activeDealerId]);
       const filteredForms = React.useMemo(() => {
         if (!search.trim()) return dealerForms;
         const q = search.toLowerCase();
@@ -372,30 +366,23 @@
         );
       }, [dealerForms, search]);
 
-      return (
-        <div className="mx-auto max-w-5xl p-4 md:p-6 space-y-6">
-          <header className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
-            <h1 className="text-2xl font-semibold tracking-tight">PDR Forms</h1>
-            <div className="flex-1" />
-            <DealerPicker dealerships={dealerships} activeId={activeDealerId} onChange={setActiveDealerId} onAdd={addDealer} />
-            <button className="px-3 py-2 rounded-xl bg-black text-white" onClick={newForm}>New Form</button>
-          </header>
-
-          <div className="flex flex-col md:flex-row gap-3 md:gap-4">
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search VIN, stock, make/model, notes" className="w-full md:w-80 px-3 py-2 border rounded-xl" />
-            <ExportImport forms={forms} setForms={setForms} dealerships={dealerships} setDealerships={setDealerships} />
-          </div>
-
-          <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredForms.map(f => (
-              <li key={f.id} className="border rounded-2xl p-4 space-y-3 bg-white shadow-sm">
-                <FormCard form={f} onChange={updateForm} onDelete={removeForm} />
-              </li>
-            ))}
-            {filteredForms.length === 0 && (<p className="text-gray-500 italic">No forms yet. Create one to get started.</p>)}
-          </ul>
+      return (<div className="mx-auto max-w-5xl p-4 md:p-6 space-y-6">
+        <header className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
+          <h1 className="text-2xl font-semibold tracking-tight">lotWalk</h1>
+          <div className="flex-1" />
+          <DealerPicker dealerships={dealerships} activeId={activeDealerId} onChange={setActiveDealerId} onAdd={addDealer} onManage={()=>setManageOpen(true)} />
+          <button className="px-3 py-2 rounded-xl bg-black text-white" onClick={newForm}>New Form</button>
+        </header>
+        <div className="flex flex-col md:flex-row gap-3 md:gap-4">
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search VIN, stock, make/model, notes" className="w-full md:w-80 px-3 py-2 border rounded-xl" />
+          <ExportImport forms={forms} setForms={setForms} dealerships={dealerships} setDealerships={setDealerships} />
         </div>
-      );
+        <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredForms.map(f => (<li key={f.id} className="card p-4 space-y-3"><FormCard form={f} onChange={updateForm} onDelete={removeForm} /></li>))}
+          {filteredForms.length===0 && (<p className="text-gray-500 italic">No forms yet. Create one to get started.</p>)}
+        </ul>
+        <ManageDealersModal open={manageOpen} onClose={()=>setManageOpen(false)} dealerships={dealerships} setDealerships={setDealerships} forms={forms} />
+      </div>);
     }
     const root = ReactDOM.createRoot(document.getElementById("root"));
     root.render(<App />);
